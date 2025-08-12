@@ -1,0 +1,24 @@
+# Railway Config as Code for Card Rectification API
+# Docs: https://docs.railway.com/reference/config-as-code
+
+[build]
+# Prefer Nixpacks unless a Dockerfile is present
+builder = "NIXPACKS"
+# If you wanted to force Dockerfile, set builder = "DOCKERFILE"
+# dockerfilePath = "Dockerfile"  # optional if using a non-standard name
+# nixpacksConfigPath = "nixpacks.toml"
+
+[deploy]
+# Ensure the model is present before starting (idempotent)
+preDeployCommand = ["python download_model.py"]
+# Start the Flask app with Gunicorn; Railway injects $PORT
+startCommand = "gunicorn --bind 0.0.0.0:$PORT app:app --timeout 180 --workers 1"
+# Mark deploy healthy once /ready is 200
+healthcheckPath = "/ready"
+healthcheckTimeout = 300
+# Auto-restart on failure
+restartPolicyType = "ALWAYS"
+restartPolicyMaxRetries = 5
+# Overlap for zero-downtime during new deploy rollout
+overlapSeconds = 20
+

@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Card Rectification API Test Form</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .section h2 {
+            color: #555;
+            margin-top: 0;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="file"], input[type="url"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+        }
+        #resultImage {
+            max-width: 100%;
+            margin-top: 10px;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Card Rectification API Test Form</h1>
+        
+        <!-- API Status Section -->
+        <div class="section">
+            <h2>📊 API Status</h2>
+            <button onclick="checkHealth()">Check API Health</button>
+            <div id="healthResult" class="result"></div>
+        </div>
+
+        <!-- File Upload Section -->
+        <div class="section">
+            <h2>📁 File Upload Test</h2>
+            <form id="uploadForm">
+                <div class="form-group">
+                    <label for="fileInput">Select Image File (PNG, JPG, JPEG, BMP):</label>
+                    <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.bmp" required>
+                </div>
+                <button type="submit">Upload and Process</button>
+            </form>
+            <div id="uploadResult" class="result"></div>
+        </div>
+
+        <!-- Base64 Test Section -->
+        <div class="section">
+            <h2>🔗 Base64 Test</h2>
+            <div class="form-group">
+                <label for="imageUrl">Image URL (will be converted to base64):</label>
+                <input type="url" id="imageUrl" placeholder="https://example.com/image.jpg">
+            </div>
+            <button onclick="testBase64()">Test Base64 Processing</button>
+            <div id="base64Result" class="result"></div>
+        </div>
+
+        <!-- PDF Processing Section -->
+        <div class="section">
+            <h2>📄 PDF Processing</h2>
+            <form id="pdfForm">
+                <div class="form-group">
+                    <label for="pdfFiles">Select Multiple Images for PDF:</label>
+                    <input type="file" id="pdfFiles" accept=".png,.jpg,.jpeg,.bmp" multiple required>
+                </div>
+                <div class="form-group">
+                    <label for="pageSize">Page Size:</label>
+                    <select id="pageSize">
+                        <option value="A4">A4</option>
+                        <option value="letter">Letter</option>
+                        <option value="legal">Legal</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="quality">JPEG Quality (1-100):</label>
+                    <input type="number" id="quality" min="1" max="100" value="90">
+                </div>
+                <button type="submit">Process and Create PDF</button>
+            </form>
+            <div id="pdfResult" class="result"></div>
+        </div>
+
+        <!-- Multiple Files Processing Section -->
+        <div class="section">
+            <h2>📦 Multiple Files Processing</h2>
+            <form id="multipleForm">
+                <div class="form-group">
+                    <label for="multipleFiles">Select Multiple Images:</label>
+                    <input type="file" id="multipleFiles" accept=".png,.jpg,.jpeg,.bmp" multiple required>
+                </div>
+                <div class="form-group">
+                    <label for="multiplePageSize">Page Size:</label>
+                    <select id="multiplePageSize">
+                        <option value="A4">A4</option>
+                        <option value="letter">Letter</option>
+                        <option value="legal">Legal</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="multipleQuality">JPEG Quality (1-100):</label>
+                    <input type="number" id="multipleQuality" min="1" max="100" value="90">
+                </div>
+                <button type="submit">Process and Create ZIP</button>
+            </form>
+            <div id="multipleResult" class="result"></div>
+        </div>
+
+        <!-- API Info Section -->
+        <div class="section">
+            <h2>ℹ️ API Information</h2>
+            <button onclick="getApiInfo()">Get API Info</button>
+            <div id="apiInfoResult" class="result"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5000';
+
+        // Check API Health
+        async function checkHealth() {
+            const resultDiv = document.getElementById('healthResult');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = 'Checking API health...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <strong>✅ API is healthy!</strong><br>
+                        Status: ${data.status}<br>
+                        Model Status: ${data.model_status}<br>
+                        Model Device: ${data.model_info?.device || 'Unknown'}<br>
+                        CUDA Available: ${data.model_info?.cuda_available || false}<br>
+                        ${data.model_info?.error ? `Error: ${data.model_info.error}` : ''}
+                    `;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ Health check failed: ${data.message}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ Connection failed: ${error.message}`;
+            }
+        }
+
+        // Handle file upload
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('fileInput');
+            const resultDiv = document.getElementById('uploadResult');
+            
+            if (!fileInput.files[0]) {
+                alert('Please select a file');
+                return;
+            }
+            
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = 'Processing file...';
+            
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/process-id`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const imageUrl = URL.createObjectURL(blob);
+                    
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <strong>✅ File processed successfully!</strong><br>
+                        <img id="resultImage" src="${imageUrl}" alt="Processed image">
+                        <br><a href="${imageUrl}" download="rectified_card.png">Download Result</a>
+                    `;
+                } else {
+                    const errorData = await response.json();
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ Processing failed: ${errorData.error}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ Upload failed: ${error.message}`;
+            }
+        });
+
+        // Test Base64 endpoint
+        async function testBase64() {
+            const imageUrl = document.getElementById('imageUrl').value;
+            const resultDiv = document.getElementById('base64Result');
+            
+            if (!imageUrl) {
+                alert('Please enter an image URL');
+                return;
+            }
+            
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = 'Converting image to base64 and processing...';
+            
+            try {
+                // Convert image to base64
+                const response = await fetch(imageUrl);
+                const blob = await response.blob();
+                
+                const reader = new FileReader();
+                reader.onload = async function() {
+                    const base64Data = reader.result;
+                    
+                    // Send to API
+                    try {
+                        const apiResponse = await fetch(`${API_BASE}/api/process-id-base64`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ image: base64Data })
+                        });
+                        
+                        const data = await apiResponse.json();
+                        
+                        if (apiResponse.ok && data.success) {
+                            resultDiv.className = 'result success';
+                            resultDiv.innerHTML = `
+                                <strong>✅ Base64 processing successful!</strong><br>
+                                <img id="resultImage" src="${data.image}" alt="Processed image">
+                            `;
+                        } else {
+                            resultDiv.className = 'result error';
+                            resultDiv.innerHTML = `❌ Processing failed: ${data.error}`;
+                        }
+                    } catch (error) {
+                        resultDiv.className = 'result error';
+                        resultDiv.innerHTML = `❌ API call failed: ${error.message}`;
+                    }
+                };
+                reader.readAsDataURL(blob);
+                
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ Failed to load image: ${error.message}`;
+            }
+        }
+
+        // Get API information
+        async function getApiInfo() {
+            const resultDiv = document.getElementById('apiInfoResult');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = 'Getting API information...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <strong>📋 API Information</strong><br>
+                        Name: ${data.name}<br>
+                        Version: ${data.version}<br>
+                        Description: ${data.description}<br>
+                        Supported Formats: ${data.supported_formats.join(', ')}<br>
+                        Max File Size: ${data.max_file_size}<br>
+                        Timestamp: ${data.timestamp}
+                    `;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ Failed to get API info`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ Connection failed: ${error.message}`;
+            }
+        }
+
+        // Handle PDF form submission
+        document.getElementById('pdfForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const filesInput = document.getElementById('pdfFiles');
+            const pageSize = document.getElementById('pageSize').value;
+            const quality = document.getElementById('quality').value;
+            const resultDiv = document.getElementById('pdfResult');
+
+            if (!filesInput.files.length) {
+                alert('Please select at least one file');
+                return;
+            }
+
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `Processing ${filesInput.files.length} files for PDF...`;
+
+            const formData = new FormData();
+            for (let file of filesInput.files) {
+                formData.append('files', file);
+            }
+            formData.append('page_size', pageSize);
+            formData.append('quality', quality);
+
+            try {
+                const response = await fetch(`${API_BASE}/api/process-and-pdf`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <strong>✅ PDF created successfully!</strong><br>
+                        Files processed: ${filesInput.files.length}<br>
+                        Page size: ${pageSize}<br>
+                        Quality: ${quality}<br>
+                        <a href="${url}" download="processed_cards.pdf">Download PDF</a>
+                    `;
+                } else {
+                    const errorData = await response.json();
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ PDF creation failed: ${errorData.error}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ PDF creation failed: ${error.message}`;
+            }
+        });
+
+        // Handle multiple files form submission
+        document.getElementById('multipleForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const filesInput = document.getElementById('multipleFiles');
+            const pageSize = document.getElementById('multiplePageSize').value;
+            const quality = document.getElementById('multipleQuality').value;
+            const resultDiv = document.getElementById('multipleResult');
+
+            if (!filesInput.files.length) {
+                alert('Please select at least one file');
+                return;
+            }
+
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `Processing ${filesInput.files.length} files for ZIP...`;
+
+            const formData = new FormData();
+            for (let file of filesInput.files) {
+                formData.append('files', file);
+            }
+            formData.append('page_size', pageSize);
+            formData.append('quality', quality);
+
+            try {
+                const response = await fetch(`${API_BASE}/api/process-multiple`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <strong>✅ ZIP created successfully!</strong><br>
+                        Files processed: ${filesInput.files.length}<br>
+                        Contains: Individual PNG files + Combined PDF<br>
+                        Page size: ${pageSize}<br>
+                        Quality: ${quality}<br>
+                        <a href="${url}" download="processed_cards.zip">Download ZIP</a>
+                    `;
+                } else {
+                    const errorData = await response.json();
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ ZIP creation failed: ${errorData.error}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ ZIP creation failed: ${error.message}`;
+            }
+        });
+
+        // Auto-check health on page load
+        window.onload = function() {
+            checkHealth();
+        };
+    </script>
+</body>
+</html>

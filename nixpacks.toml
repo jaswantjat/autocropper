@@ -1,0 +1,24 @@
+providers = ['python']
+
+[variables]
+PYTHONUNBUFFERED = '1'
+PYTHONDONTWRITEBYTECODE = '1'
+HOST = '0.0.0.0'
+FORCE_CPU = 'true'
+
+[phases.setup]
+nixPkgs = ['python39', 'libGL', 'glib', 'libxcrypt-legacy']
+
+[phases.install]
+cmds = [
+    'pip install --upgrade pip',
+    'pip install -r requirements.txt'
+]
+
+[phases.build]
+cmds = [
+    'echo "Build phase completed"'
+]
+
+[start]
+cmd = 'gunicorn --bind 0.0.0.0:$PORT app:app --timeout 180 --workers 1'
