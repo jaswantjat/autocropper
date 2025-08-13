@@ -7,7 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HOST=0.0.0.0 \
-    FORCE_CPU=true
+    FORCE_CPU=true \
+    PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 # Install system dependencies required by opencv and pillow
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,8 +22,8 @@ WORKDIR /app
 
 # Install Python dependencies first for better layer caching
 COPY requirements.txt ./
-RUN pip install --upgrade pip \
-    && pip install -r requirements.txt
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
@@ -32,8 +33,8 @@ EXPOSE 5000
 
 # Healthcheck uses lightweight liveness endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
-  CMD wget -qO- http://127.0.0.1:${PORT:-5000}/live || exit 1
+  CMD wget -qO- http://127.0.0.1:$PORT/live || exit 1
 
 # Start with Gunicorn; Railway will set $PORT
-CMD ["bash", "-lc", "gunicorn --bind 0.0.0.0:${PORT:-5000} app:app --timeout 180 --workers 1"]
+CMD ["bash", "-lc", "gunicorn --bind 0.0.0.0:$PORT app:app --timeout 180 --workers 1"]
 
