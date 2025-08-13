@@ -13,6 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install system dependencies required by opencv and pillow
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
+        wget \
         libgl1 \
         libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
@@ -27,6 +28,9 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
 
 # Copy application code
 COPY . .
+
+# Download model at build time so it is baked into the image
+RUN python download_model.py || (echo "Model download failed during build" && exit 1)
 
 # Expose the Flask/Gunicorn port
 EXPOSE 5000
