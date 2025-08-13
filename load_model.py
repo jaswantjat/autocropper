@@ -38,7 +38,8 @@ def load_model(model_path: str = None, model_arch: str = None, force_cpu: bool =
         print("Model Error: Model '" + model_arch + "' import failed, please check the model file and path.")
         print(f"Model path: {model_path}")
         print(f"Error details: {e}")
-        sys.exit(1)
+        # Raise so the application can start and surface readiness=503 instead of exiting
+        raise RuntimeError(f"Model load failed: {e}")
 
     return model, device
 
