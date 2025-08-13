@@ -279,6 +279,113 @@ def validate_corners(approx):
         logger.error(f"Corner validation failed: {e}")
         raise CornerDetectionError(f"Corner validation failed: {e}")
 
+def _detect_corners_by_contour(img, edged):
+    """
+    Fallback corner detection using contour approximation.
+
+    Args:
+        img: Original image
+        edged: Edge-detected image
+
+    Returns:
+        numpy.ndarray: Array of 4 corner points
+
+    Raises:
+        CornerDetectionError: If corner detection fails
+    """
+    logger.debug("Starting contour-based corner detection")
+
+    try:
+        # Find contours
+        cnts = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = cnts[0] if imutils.is_cv2(or_better=True) else cnts[1]
+
+        if not cnts:
+            raise CornerDetectionError("No contours found for fallback detection")
+
+        # Sort contours by area and try the largest ones
+        cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+
+        # Calculate image area once
+        img_area = img.shape[0] * img.shape[1]
+
+        for i, contour in enumerate(cnts[:5]):  # Try top 5 contours
+            # Approximate contour to polygon
+            epsilon = 0.02 * cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+
+            logger.debug(f"Contour {i}: area={cv2.contourArea(contour):.0f}, vertices={len(approx)}")
+
+            # If we have 4 vertices, this might be our card
+            if len(approx) == 4:
+                # Check if the contour is large enough
+                area = cv2.contourArea(approx)
+
+                if area > 0.1 * img_area:  # At least 10% of image area
+                    logger.debug(f"Found potential card contour with area {area:.0f}")
+
+                    # Reshape to expected format
+                    corners = approx.reshape(4, 2).astype(np.float32)
+
+                    # Order corners: top-left, top-right, bottom-right, bottom-left
+                    corners = _order_corners(corners)
+
+                    # Validate corners
+                    try:
+                        validate_corners(corners.reshape(4, 1, 2))
+                        logger.debug("Contour-based corner detection successful")
+                        return corners.reshape(4, 1, 2)
+                    except CornerDetectionError as e:
+                        logger.debug(f"Corner validation failed: {e}")
+                        continue
+
+            # Try with different epsilon values for approximation
+            for eps_factor in [0.01, 0.03, 0.05]:
+                epsilon = eps_factor * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+
+                if len(approx) == 4:
+                    area = cv2.contourArea(approx)
+                    if area > 0.05 * img_area:  # Lower threshold
+                        corners = approx.reshape(4, 2).astype(np.float32)
+                        corners = _order_corners(corners)
+
+                        try:
+                            validate_corners(corners.reshape(4, 1, 2))
+                            logger.debug(f"Contour-based detection successful with epsilon {eps_factor}")
+                            return corners.reshape(4, 1, 2)
+                        except CornerDetectionError:
+                            continue
+
+        raise CornerDetectionError("No valid rectangular contour found")
+
+    except Exception as e:
+        logger.error(f"Contour-based corner detection failed: {e}")
+        raise CornerDetectionError(f"Contour-based corner detection failed: {e}")
+
+def _order_corners(corners):
+    """Order corners in clockwise order starting from top-left."""
+    # Calculate center point
+    center = np.mean(corners, axis=0)
+
+    # Sort by angle from center
+    def angle_from_center(point):
+        return np.arctan2(point[1] - center[1], point[0] - center[0])
+
+    # Sort corners by angle
+    sorted_corners = sorted(corners, key=angle_from_center)
+
+    # Find top-left corner (smallest x + y)
+    sums = [pt[0] + pt[1] for pt in sorted_corners]
+    top_left_idx = np.argmin(sums)
+
+    # Reorder starting from top-left
+    ordered = []
+    for i in range(4):
+        ordered.append(sorted_corners[(top_left_idx + i) % 4])
+
+    return np.array(ordered, dtype=np.float32)
+
 def detect_corners(edged, img, ratio):
     """
     Detect four corners of the ID card from edge image.
@@ -315,10 +422,17 @@ def detect_corners(edged, img, ratio):
         edgelines = np.zeros(edged.shape, np.uint8)
         cNum = 4
 
-        # Process contours to create edge lines
+        # Process contours to create edge lines with improved logic
+        logger.debug(f"Found {len(cnts)} contours")
+
         for i in range(min(cNum, len(cnts))):
+            contour_area = cv2.contourArea(cnts[i])
             TH = 1 / 20.0
-            if cv2.contourArea(cnts[i]) < TH * img.shape[0] * img.shape[1]:
+            area_threshold = TH * img.shape[0] * img.shape[1]
+
+            logger.debug(f"Contour {i}: area={contour_area:.0f}, threshold={area_threshold:.0f}")
+
+            if contour_area < area_threshold:
                 cv2.drawContours(edgelines, [cnts[i]], 0, (255, 255, 255), -1)
             else:
                 cv2.drawContours(edgelines, [cnts[i]], 0, (1, 1, 1), -1)
@@ -326,13 +440,25 @@ def detect_corners(edged, img, ratio):
                 break
             cv2.drawContours(edgelines, [cnts[i]], 0, (255, 255, 255), -1)
 
-        # Detect lines using Hough transform
-        lines = cv2.HoughLines(edgelines, 1, np.pi / 180, 200)
+        # Enhance edge lines for better line detection
+        kernel = np.ones((2, 2), np.uint8)
+        edgelines = cv2.morphologyEx(edgelines, cv2.MORPH_CLOSE, kernel)
+        edgelines = cv2.dilate(edgelines, kernel, iterations=1)
+
+        # Detect lines using Hough transform with multiple thresholds
+        lines = None
+        thresholds = [150, 120, 100, 80, 60]  # Try progressively lower thresholds
+
+        for threshold in thresholds:
+            lines = cv2.HoughLines(edgelines, 1, np.pi / 180, threshold)
+            if lines is not None and len(lines) >= 4:
+                logger.debug(f"Found {len(lines)} lines with threshold {threshold}")
+                break
 
         if lines is None or len(lines) < 4:
             raise CornerDetectionError(f"Insufficient lines detected: {len(lines) if lines is not None else 0}")
 
-        # Filter and select strong lines
+        # Filter and select strong lines with improved logic
         strong_lines = np.zeros([4, 1, 2])
         n2 = 0
 
@@ -344,20 +470,52 @@ def detect_corners(edged, img, ratio):
                     strong_lines[n2] = lines[n1]
                     n2 = n2 + 1
                 else:
-                    c1 = np.isclose(abs(rho), abs(strong_lines[0:n2, 0, 0]), atol=80)
-                    c2 = np.isclose(np.pi - theta, strong_lines[0:n2, 0, 1], atol=np.pi / 36)
+                    # Check for parallel lines (opposite direction)
+                    c1 = np.isclose(abs(rho), abs(strong_lines[0:n2, 0, 0]), atol=100)
+                    c2 = np.isclose(np.pi - theta, strong_lines[0:n2, 0, 1], atol=np.pi / 24)
                     c = np.all([c1, c2], axis=0)
                     if any(c):
                         continue
-                    closeness_rho = np.isclose(rho, strong_lines[0:n2, 0, 0], atol=40)
-                    closeness_theta = np.isclose(theta, strong_lines[0:n2, 0, 1], atol=np.pi / 36)
+
+                    # Check for similar lines (same direction)
+                    closeness_rho = np.isclose(rho, strong_lines[0:n2, 0, 0], atol=60)
+                    closeness_theta = np.isclose(theta, strong_lines[0:n2, 0, 1], atol=np.pi / 24)
                     closeness = np.all([closeness_rho, closeness_theta], axis=0)
-                    if not any(closeness) and n2 < 4 and theta != 0:
+
+                    # Accept line if it's sufficiently different and we need more lines
+                    if not any(closeness) and n2 < 4:
                         strong_lines[n2] = lines[n1]
                         n2 = n2 + 1
 
+        # If we still don't have 4 lines, try a more lenient approach
         if n2 < 4:
-            raise CornerDetectionError(f"Only found {n2} strong lines, need 4")
+            logger.warning(f"Only found {n2} strong lines with strict filtering, trying lenient approach")
+            strong_lines = np.zeros([4, 1, 2])
+            n2 = 0
+
+            for n1 in range(0, min(len(lines), 20)):  # Check first 20 lines
+                if n2 == 4:
+                    break
+                for rho, theta in lines[n1]:
+                    if n1 == 0:
+                        strong_lines[n2] = lines[n1]
+                        n2 = n2 + 1
+                    else:
+                        # More lenient similarity check
+                        closeness_rho = np.isclose(rho, strong_lines[0:n2, 0, 0], atol=80)
+                        closeness_theta = np.isclose(theta, strong_lines[0:n2, 0, 1], atol=np.pi / 18)
+                        closeness = np.all([closeness_rho, closeness_theta], axis=0)
+
+                        if not any(closeness) and n2 < 4:
+                            strong_lines[n2] = lines[n1]
+                            n2 = n2 + 1
+
+        # Final fallback: try contour-based corner detection
+        if n2 < 4:
+            logger.warning("Hough line detection failed, trying contour-based approach")
+            return _detect_corners_by_contour(img, edged)
+
+        logger.debug(f"Successfully found {n2} strong lines")
 
         # Convert lines to line segments
         lines1 = np.zeros((len(strong_lines), 4), dtype=int)
