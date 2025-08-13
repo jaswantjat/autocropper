@@ -2,15 +2,13 @@
 # Docs: https://docs.railway.com/reference/config-as-code
 
 [build]
-# Build from the Dockerfile to ensure system deps and baked model
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+builder = "NIXPACKS"
 
 [deploy]
-# Let Dockerfile CMD and HEALTHCHECK run; no startCommand or preDeploy here
-# Auto-restart policy
 restartPolicyType = "ALWAYS"
 restartPolicyMaxRetries = 5
-# Optional: overlap during deploys
-overlapSeconds = 20
+
+[deploy.resources]
+memory = "2GB"
+cpu = "1"
 

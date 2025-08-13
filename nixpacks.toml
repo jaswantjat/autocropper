@@ -17,8 +17,10 @@ cmds = [
 
 [phases.build]
 cmds = [
-    'echo "Build phase completed"'
+    'echo "Checking model file..."',
+    'if [ ! -f "CRDN1000.pkl" ]; then echo "Downloading model..." && python download_model.py; fi',
+    'if [ -f "CRDN1000.pkl" ]; then echo "Model file ready"; else echo "Model file missing"; exit 1; fi'
 ]
 
 [start]
-cmd = "gunicorn --bind 0.0.0.0:$PORT app:app --timeout 180 --workers 1"
+cmd = "gunicorn --bind 0.0.0.0:$PORT app:app --timeout 180 --workers 1 --access-logfile - --error-logfile -"

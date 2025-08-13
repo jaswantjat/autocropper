@@ -61,6 +61,28 @@ temp_files_lock = threading.Lock()
 app = Flask(__name__)
 
 # ============================================================================
+# LOGGING SETUP
+# ============================================================================
+
+def setup_logging():
+    """Set up comprehensive logging for debugging."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        force=True
+    )
+    logger = logging.getLogger(__name__)
+    logger.info("=== Logging initialized ===")
+    return logger
+
+def get_port():
+    """Get port from environment with fallback."""
+    return int(os.environ.get('PORT', 8080))
+
+# Initialize logging immediately
+logger = setup_logging()
+
+# ============================================================================
 # CONFIGURATION INITIALIZATION
 # ============================================================================
 
@@ -171,26 +193,43 @@ def check_memory():
         logger.warning(f"Memory check failed: {e}")
         return True
 
-def init_model():
-    """Initialize the card rectification model with proper error handling."""
+def load_model_with_logging():
+    """Load model with comprehensive logging."""
     global trained_model, device, model_loaded, model_load_error
 
-    try:
-        logger.info("Initializing card rectification model...")
+    logger.info("=== Starting model loading ===")
 
+    try:
         # Get model path from configuration
         if app_config:
             model_path = app_config.get_model_path_str()
             force_cpu = app_config.FORCE_CPU
         else:
             model_path = "CRDN1000.pkl"
-            force_cpu = False
+            force_cpu = os.environ.get('FORCE_CPU', 'false').lower() == 'true'
 
-        # Check if model file exists
+        logger.info(f"Checking for model file: {model_path}")
+
+        # Check if model file exists, try to download if missing
         if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file {model_path} not found. Please run download_model.py first.")
+            logger.warning(f"Model file {model_path} not found. Attempting to download...")
+            try:
+                from download_model import download_model
+                if download_model():
+                    logger.info("Model downloaded successfully")
+                else:
+                    raise FileNotFoundError("Failed to download model file")
+            except Exception as download_error:
+                logger.error(f"Failed to download model: {download_error}")
+                raise FileNotFoundError(f"Model file {model_path} not found and download failed")
+        else:
+            logger.info("Model file found, attempting to load...")
 
-        # Load the model
+        # Import and load the model
+        logger.info("Importing load_model module...")
+        from load_model import load_model
+
+        logger.info("Loading model...")
         trained_model, device = load_model()
 
         # Force CPU if configured
@@ -214,7 +253,14 @@ def init_model():
         model_loaded = False
         model_load_error = str(e)
         logger.error(f"✗ Failed to load model: {e}")
+        logger.error(f"✗ Model load error details: {type(e).__name__}: {str(e)}")
         # Don't exit - let the app start but return errors for processing requests
+
+    logger.info("=== Model loading complete ===")
+
+def init_model():
+    """Initialize the card rectification model with proper error handling."""
+    load_model_with_logging()
 
 def validate_image(image_data):
     """Validate that the image data is valid and can be processed."""
@@ -992,27 +1038,52 @@ def register_cleanup():
     atexit.register(cleanup_all_temp_files)
     logger.info("✓ Cleanup handlers registered")
 
+# ============================================================================
+# APPLICATION INITIALIZATION
+# ============================================================================
+
+def initialize_app():
+    """Initialize the application with comprehensive logging."""
+    logger.info("=== Initializing Card Rectification API ===")
+
+    # Log environment
+    logger.info(f"Environment: {os.environ.get('RAILWAY_ENVIRONMENT', 'unknown')}")
+    logger.info(f"Port: {get_port()}")
+    logger.info(f"Working directory: {os.getcwd()}")
+    logger.info(f"Python version: {sys.version}")
+
+    # List files in current directory
+    try:
+        files = os.listdir('.')
+        logger.info(f"Files in directory: {files}")
+    except Exception as e:
+        logger.error(f"Failed to list directory: {e}")
+
+    # Initialize configuration
+    logger.info("Initializing configuration...")
+    config_success = init_config()
+    if not config_success:
+        logger.warning("Using fallback configuration")
+
+    # Register cleanup handlers
+    register_cleanup()
+
+    # Load model
+    logger.info("Loading model...")
+    init_model()
+
+    if model_loaded:
+        logger.info("✓ Model loaded successfully")
+    else:
+        logger.warning(f"⚠️ Model loading failed: {model_load_error}")
+
+    logger.info("=== Application initialization complete ===")
+
 def main():
     """Main application entry point."""
     try:
-        # Initialize configuration first
-        print("Initializing Card Rectification API...")
-        config_success = init_config()
-
-        if not config_success:
-            print("Warning: Using fallback configuration")
-
-        # Register cleanup handlers
-        register_cleanup()
-
-        # Initialize the model
-        logger.info("Starting Card Rectification API...")
-        init_model()
-
-        if model_loaded:
-            logger.info("🚀 Card Rectification API is ready!")
-        else:
-            logger.warning("⚠️  API started but model failed to load")
+        # Initialize the application
+        initialize_app()
 
         # Start the Flask application using configuration
         if app_config:
@@ -1022,10 +1093,10 @@ def main():
         else:
             # Fallback values
             host = os.environ.get('HOST', '0.0.0.0')
-            port = int(os.environ.get('PORT', 5000))
+            port = get_port()
             debug_mode = os.environ.get('DEBUG', 'False').lower() == 'true'
 
-        logger.info(f"Starting server on {host}:{port} (debug={debug_mode})")
+        logger.info(f"🚀 Starting Flask app on {host}:{port} (debug={debug_mode})")
         app.run(
             host=host,
             port=port,
@@ -1040,6 +1111,12 @@ def main():
         sys.exit(1)
     finally:
         cleanup_all_temp_files()
+
+# Initialize the app when this module is imported (for gunicorn)
+try:
+    initialize_app()
+except Exception as e:
+    logger.error(f"Failed to initialize app during import: {e}")
 
 if __name__ == '__main__':
     main()
