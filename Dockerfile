@@ -16,6 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wget \
         libgl1 \
         libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender-dev \
+        libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -36,8 +40,9 @@ RUN python download_model.py || (echo "Model download failed during build" && ex
 EXPOSE 5000
 
 # Healthcheck uses lightweight liveness endpoint
+# Use PORT env var with fallback to 5000 for local development
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
-  CMD wget -qO- http://127.0.0.1:$PORT/live || exit 1
+  CMD wget -qO- http://127.0.0.1:${PORT:-5000}/live || exit 1
 
 # Start with Gunicorn; Railway will set $PORT
 CMD ["bash", "-lc", "gunicorn --bind 0.0.0.0:$PORT app:app --timeout 180 --workers 1"]

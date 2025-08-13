@@ -16,6 +16,7 @@ import atexit
 import threading
 import zipfile
 import img2pdf
+import gc
 from datetime import datetime
 from io import BytesIO
 from PIL import Image
@@ -25,6 +26,13 @@ from skimage import exposure, img_as_ubyte
 from imutils.perspective import four_point_transform
 from itertools import combinations
 from torchvision import transforms
+
+# Optional memory monitoring
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 # Import the card rectification modules
 from load_model import load_model
@@ -146,6 +154,22 @@ def cleanup_all_temp_files():
         remove_temp_file(filepath)
 
     logger.info(f"Cleaned up {len(files_to_remove)} temporary files")
+
+def check_memory():
+    """Check available memory and return True if sufficient."""
+    if not PSUTIL_AVAILABLE:
+        return True
+
+    try:
+        memory = psutil.virtual_memory()
+        if memory.percent > 85:  # 85% memory usage threshold
+            logger.warning(f"High memory usage: {memory.percent}%")
+            gc.collect()  # Force garbage collection
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"Memory check failed: {e}")
+        return True
 
 def init_model():
     """Initialize the card rectification model with proper error handling."""
@@ -473,6 +497,15 @@ def health_check():
             model_info["gpu_name"] = torch.cuda.get_device_name(0)
             model_info["gpu_memory"] = f"{torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}GB"
 
+        # Add memory info if available
+        if PSUTIL_AVAILABLE:
+            try:
+                memory = psutil.virtual_memory()
+                model_info["system_memory_usage"] = f"{memory.percent}%"
+                model_info["system_memory_available"] = f"{memory.available / (1024**3):.1f}GB"
+            except Exception:
+                pass
+
         return jsonify({
             'status': 'healthy',
             'message': 'Card Rectification API is running',
@@ -535,6 +568,13 @@ def process_id_upload():
     temp_file_path = None
 
     try:
+        # Check memory before processing
+        if not check_memory():
+            return jsonify({
+                'error': 'Insufficient memory available',
+                'details': 'System memory usage too high'
+            }), 503
+
         # Check if model is loaded
         if not model_loaded:
             return jsonify({
@@ -584,6 +624,9 @@ def process_id_upload():
         result_bytes = buffer.tobytes()
 
         logger.info(f"✓ Successfully processed {file.filename}")
+
+        # Force cleanup after processing
+        gc.collect()
 
         # Return as file download
         return send_file(
