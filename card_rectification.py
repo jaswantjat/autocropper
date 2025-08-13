@@ -365,26 +365,25 @@ def _detect_corners_by_contour(img, edged):
 
 def _order_corners(corners):
     """Order corners in clockwise order starting from top-left."""
-    # Calculate center point
-    center = np.mean(corners, axis=0)
+    # Convert to numpy array if not already
+    corners = np.array(corners, dtype=np.float32)
 
-    # Sort by angle from center
-    def angle_from_center(point):
-        return np.arctan2(point[1] - center[1], point[0] - center[0])
+    # Find the top-left, top-right, bottom-right, bottom-left corners
+    # Sum and difference of coordinates
+    s = corners.sum(axis=1)
+    diff = np.diff(corners, axis=1)
 
-    # Sort corners by angle
-    sorted_corners = sorted(corners, key=angle_from_center)
+    # Top-left has smallest sum, bottom-right has largest sum
+    # Top-right has smallest difference, bottom-left has largest difference
+    top_left = corners[np.argmin(s)]
+    bottom_right = corners[np.argmax(s)]
+    top_right = corners[np.argmin(diff)]
+    bottom_left = corners[np.argmax(diff)]
 
-    # Find top-left corner (smallest x + y)
-    sums = [pt[0] + pt[1] for pt in sorted_corners]
-    top_left_idx = np.argmin(sums)
+    # Return in order: top-left, top-right, bottom-right, bottom-left
+    ordered = np.array([top_left, top_right, bottom_right, bottom_left], dtype=np.float32)
 
-    # Reorder starting from top-left
-    ordered = []
-    for i in range(4):
-        ordered.append(sorted_corners[(top_left_idx + i) % 4])
-
-    return np.array(ordered, dtype=np.float32)
+    return ordered
 
 def _detect_robust_lines(edge_image, img_shape):
     """
@@ -426,6 +425,8 @@ def _detect_robust_lines(edge_image, img_shape):
             horizontal_lines.append(line[0])
         else:  # Vertical-ish lines
             vertical_lines.append(line[0])
+
+    logger.debug(f"Classified {len(horizontal_lines)} horizontal and {len(vertical_lines)} vertical lines")
 
     def merge_lines(lines, is_horizontal):
         """Merge nearby parallel lines and select the best representative."""
@@ -494,27 +495,24 @@ def _detect_robust_lines(edge_image, img_shape):
     # Convert line segments back to rho-theta format for compatibility
     def line_to_rho_theta(x1, y1, x2, y2):
         """Convert line segment to rho-theta representation."""
-        # Calculate line parameters
+        # Calculate the angle of the line
         if x2 - x1 == 0:  # Vertical line
-            rho = abs(x1)
             theta = np.pi / 2
+            rho = abs(x1)
         else:
-            # Line equation: ax + by + c = 0
-            # From two points: (y2-y1)x - (x2-x1)y + (x2-x1)y1 - (y2-y1)x1 = 0
-            a = y2 - y1
-            b = x1 - x2
-            c = (x2 - x1) * y1 - (y2 - y1) * x1
+            # Calculate angle
+            angle = np.arctan2(y2 - y1, x2 - x1)
+            theta = angle + np.pi/2  # Perpendicular to line direction
 
-            # Normalize
-            norm = np.sqrt(a*a + b*b)
-            if norm > 0:
-                a, b, c = a/norm, b/norm, c/norm
-
-            # Convert to rho-theta
-            rho = abs(c)
-            theta = np.arctan2(-a, b)
-            if theta < 0:
+            # Normalize theta to [0, pi]
+            while theta < 0:
                 theta += np.pi
+            while theta >= np.pi:
+                theta -= np.pi
+
+            # Calculate rho (distance from origin to line)
+            # Using point-to-line distance formula
+            rho = abs(x1 * np.cos(theta) + y1 * np.sin(theta))
 
         return rho, theta
 

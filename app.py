@@ -184,8 +184,10 @@ def check_memory():
 
     try:
         memory = psutil.virtual_memory()
-        if memory.percent > 85:  # 85% memory usage threshold
-            logger.warning(f"High memory usage: {memory.percent}%")
+        # Allow configurable memory threshold for testing
+        threshold = int(os.environ.get('MEMORY_THRESHOLD', '85'))
+        if memory.percent > threshold:
+            logger.warning(f"High memory usage: {memory.percent}% (threshold: {threshold}%)")
             gc.collect()  # Force garbage collection
             return False
         return True
