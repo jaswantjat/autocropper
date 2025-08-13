@@ -386,6 +386,150 @@ def _order_corners(corners):
 
     return np.array(ordered, dtype=np.float32)
 
+def _detect_robust_lines(edge_image, img_shape):
+    """
+    Detects lines in the edge image using Hough Transform and robustly selects the 4 bounding lines.
+    This prevents the selection of parallel lines from the same edge.
+    """
+    height, width = img_shape[:2]
+    logger.debug("Starting robust line detection with merging strategy...")
+
+    # Use HoughLinesP for line segments instead of HoughLines for infinite lines
+    lines = cv2.HoughLinesP(
+        edge_image,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=100,  # Starting threshold
+        minLineLength=min(height, width) // 10,  # Minimum line length
+        maxLineGap=min(height, width) // 20      # Maximum gap between line segments
+    )
+
+    if lines is None:
+        logger.warning("HoughLinesP found no lines.")
+        return None
+
+    logger.debug(f"Found {len(lines)} raw line segments.")
+
+    horizontal_lines = []
+    vertical_lines = []
+
+    # Classify lines as horizontal or vertical
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        # Calculate angle, handle vertical lines
+        if x2 - x1 == 0:
+            angle = 90.0
+        else:
+            angle = np.degrees(np.arctan((y2 - y1) / (x2 - x1)))
+
+        if abs(angle) < 45:  # Horizontal-ish lines
+            horizontal_lines.append(line[0])
+        else:  # Vertical-ish lines
+            vertical_lines.append(line[0])
+
+    def merge_lines(lines, is_horizontal):
+        """Merge nearby parallel lines and select the best representative."""
+        if not lines:
+            return []
+
+        # Sort lines by their position (y for horizontal, x for vertical)
+        if is_horizontal:
+            # Average y position
+            lines.sort(key=lambda line: (line[1] + line[3]) / 2)
+        else:
+            # Average x position
+            lines.sort(key=lambda line: (line[0] + line[2]) / 2)
+
+        merged_lines = []
+        current_group = [lines[0]]
+
+        # Define a threshold for merging based on image dimension
+        merge_thresh = height * 0.05 if is_horizontal else width * 0.05
+
+        for i in range(1, len(lines)):
+            line1 = current_group[-1]
+            line2 = lines[i]
+
+            if is_horizontal:
+                pos1 = (line1[1] + line1[3]) / 2
+                pos2 = (line2[1] + line2[3]) / 2
+            else:
+                pos1 = (line1[0] + line1[2]) / 2
+                pos2 = (line2[0] + line2[2]) / 2
+
+            if abs(pos1 - pos2) < merge_thresh:
+                current_group.append(line2)
+            else:
+                # Finalize the previous group by taking the line with max length
+                lengths = [np.sqrt((l[2]-l[0])**2 + (l[3]-l[1])**2) for l in current_group]
+                best_line = current_group[np.argmax(lengths)]
+                merged_lines.append(best_line)
+                current_group = [line2]
+
+        # Add the last group
+        lengths = [np.sqrt((l[2]-l[0])**2 + (l[3]-l[1])**2) for l in current_group]
+        best_line = current_group[np.argmax(lengths)]
+        merged_lines.append(best_line)
+
+        return merged_lines
+
+    merged_horizontal = merge_lines(horizontal_lines, is_horizontal=True)
+    merged_vertical = merge_lines(vertical_lines, is_horizontal=False)
+
+    logger.debug(f"Merged to {len(merged_horizontal)} horizontal and {len(merged_vertical)} vertical lines.")
+
+    if len(merged_horizontal) < 2 or len(merged_vertical) < 2:
+        logger.warning("Could not find at least 2 horizontal and 2 vertical lines after merging.")
+        return None
+
+    # Select the outermost lines
+    merged_horizontal.sort(key=lambda line: (line[1] + line[3]) / 2)  # Sort by Y
+    merged_vertical.sort(key=lambda line: (line[0] + line[2]) / 2)    # Sort by X
+
+    top_line = merged_horizontal[0]
+    bottom_line = merged_horizontal[-1]
+    left_line = merged_vertical[0]
+    right_line = merged_vertical[-1]
+
+    # Convert line segments back to rho-theta format for compatibility
+    def line_to_rho_theta(x1, y1, x2, y2):
+        """Convert line segment to rho-theta representation."""
+        # Calculate line parameters
+        if x2 - x1 == 0:  # Vertical line
+            rho = abs(x1)
+            theta = np.pi / 2
+        else:
+            # Line equation: ax + by + c = 0
+            # From two points: (y2-y1)x - (x2-x1)y + (x2-x1)y1 - (y2-y1)x1 = 0
+            a = y2 - y1
+            b = x1 - x2
+            c = (x2 - x1) * y1 - (y2 - y1) * x1
+
+            # Normalize
+            norm = np.sqrt(a*a + b*b)
+            if norm > 0:
+                a, b, c = a/norm, b/norm, c/norm
+
+            # Convert to rho-theta
+            rho = abs(c)
+            theta = np.arctan2(-a, b)
+            if theta < 0:
+                theta += np.pi
+
+        return rho, theta
+
+    # Convert to the expected format
+    strong_lines = np.zeros([4, 1, 2])
+    lines_data = [top_line, bottom_line, left_line, right_line]
+
+    for i, line_seg in enumerate(lines_data):
+        x1, y1, x2, y2 = line_seg
+        rho, theta = line_to_rho_theta(x1, y1, x2, y2)
+        strong_lines[i] = [[rho, theta]]
+
+    logger.debug("Successfully found 4 strong boundary lines with robust merging.")
+    return strong_lines
+
 def detect_corners(edged, img, ratio):
     """
     Detect four corners of the ID card from edge image.
@@ -445,77 +589,17 @@ def detect_corners(edged, img, ratio):
         edgelines = cv2.morphologyEx(edgelines, cv2.MORPH_CLOSE, kernel)
         edgelines = cv2.dilate(edgelines, kernel, iterations=1)
 
-        # Detect lines using Hough transform with multiple thresholds
-        lines = None
-        thresholds = [150, 120, 100, 80, 60]  # Try progressively lower thresholds
+        # Use robust line detection with proper merging
+        try:
+            logger.debug("Attempting robust line-based corner detection...")
+            strong_lines = _detect_robust_lines(edgelines, img.shape)
+            if strong_lines is None:
+                raise CornerDetectionError("Robust line detection failed to find 4 boundary lines")
 
-        for threshold in thresholds:
-            lines = cv2.HoughLines(edgelines, 1, np.pi / 180, threshold)
-            if lines is not None and len(lines) >= 4:
-                logger.debug(f"Found {len(lines)} lines with threshold {threshold}")
-                break
-
-        if lines is None or len(lines) < 4:
-            raise CornerDetectionError(f"Insufficient lines detected: {len(lines) if lines is not None else 0}")
-
-        # Filter and select strong lines with improved logic
-        strong_lines = np.zeros([4, 1, 2])
-        n2 = 0
-
-        for n1 in range(0, len(lines)):
-            if n2 == 4:
-                break
-            for rho, theta in lines[n1]:
-                if n1 == 0:
-                    strong_lines[n2] = lines[n1]
-                    n2 = n2 + 1
-                else:
-                    # Check for parallel lines (opposite direction)
-                    c1 = np.isclose(abs(rho), abs(strong_lines[0:n2, 0, 0]), atol=100)
-                    c2 = np.isclose(np.pi - theta, strong_lines[0:n2, 0, 1], atol=np.pi / 24)
-                    c = np.all([c1, c2], axis=0)
-                    if any(c):
-                        continue
-
-                    # Check for similar lines (same direction)
-                    closeness_rho = np.isclose(rho, strong_lines[0:n2, 0, 0], atol=60)
-                    closeness_theta = np.isclose(theta, strong_lines[0:n2, 0, 1], atol=np.pi / 24)
-                    closeness = np.all([closeness_rho, closeness_theta], axis=0)
-
-                    # Accept line if it's sufficiently different and we need more lines
-                    if not any(closeness) and n2 < 4:
-                        strong_lines[n2] = lines[n1]
-                        n2 = n2 + 1
-
-        # If we still don't have 4 lines, try a more lenient approach
-        if n2 < 4:
-            logger.warning(f"Only found {n2} strong lines with strict filtering, trying lenient approach")
-            strong_lines = np.zeros([4, 1, 2])
-            n2 = 0
-
-            for n1 in range(0, min(len(lines), 20)):  # Check first 20 lines
-                if n2 == 4:
-                    break
-                for rho, theta in lines[n1]:
-                    if n1 == 0:
-                        strong_lines[n2] = lines[n1]
-                        n2 = n2 + 1
-                    else:
-                        # More lenient similarity check
-                        closeness_rho = np.isclose(rho, strong_lines[0:n2, 0, 0], atol=80)
-                        closeness_theta = np.isclose(theta, strong_lines[0:n2, 0, 1], atol=np.pi / 18)
-                        closeness = np.all([closeness_rho, closeness_theta], axis=0)
-
-                        if not any(closeness) and n2 < 4:
-                            strong_lines[n2] = lines[n1]
-                            n2 = n2 + 1
-
-        # Final fallback: try contour-based corner detection
-        if n2 < 4:
-            logger.warning("Hough line detection failed, trying contour-based approach")
+            logger.debug("Successfully found 4 strong boundary lines using robust method")
+        except Exception as e:
+            logger.warning(f"Robust line detection failed: {e}. Trying contour-based approach")
             return _detect_corners_by_contour(img, edged)
-
-        logger.debug(f"Successfully found {n2} strong lines")
 
         # Convert lines to line segments
         lines1 = np.zeros((len(strong_lines), 4), dtype=int)
